@@ -49,6 +49,13 @@ import { runTextureAnimationShowcase } from "./examples/TextureAnimationShowcase
 import { runFireTextureAnimationShowcase } from "./examples/fireAnimationShowcase";
 import { runFluidSimulation } from "./examples/FluidSimulation";
 import { runGaussianSplatting } from "./examples/GaussianSplatting";
+import { runSampler } from "./examples/runSampler";
+import { runMipSampler } from "./examples/mipmap";
+import { runHdrSkybox } from "./examples/hdrSkybox";
+import { runGpuCulling } from "./examples/gpuCulling";
+import { runHizOcclusionCulling } from "./examples/hizOcclusionCulling";
+import { runDepthTest } from "./examples/depth_test";
+import { runRenderToTexture } from "./examples/render_to_texture";
 
 export type CleanupFunction = () => void;
 
@@ -140,13 +147,17 @@ const demoCategories: DemoCategory[] = [
         },
       },
       { id: "skybox", name: "3D 全景天空盒 (Cubemap)", run: (d, c, f, cv) => runSkybox(d, c, f, cv) },
+         { id: "hdrSkybox", name: "hdr 全景天空盒 (Cubemap)", run: (d, c, f, cv, gui) => runHdrSkybox(d, c, f, cv, gui) },
+      
       { id: "earlyz", name: "Early-Z 提前测试", run: (d, c, f) => runEarlyZ(d, c, f) },
       { id: "shadow", name: "动态光照阴影 (ShadowMap)", run: (d, c, f) => runDynamicShadowMap(d, c, f) },
-         { id: "sofashadow", name: "软阴影 ", run: (d, c, f) => runSoftShadow(d, c, f) },
-   { id: "LightTypesShowcase", name: "光源 ", run: (d, c, f, cv, gui) => runLightTypesShowcase(d, c, f, cv, gui) },
- { id: "csm", name: "csm ", run: (d, c, f, cv, gui) => runCSMShowcase(d, c, f, cv, gui) },
-
-     { id: "video", name: "视频材质 ", run: (d, c, f, cv, gui) => runVideoTextureShowcase(d, c, f, cv, gui) },
+      { id: "sofashadow", name: "软阴影 ", run: (d, c, f) => runSoftShadow(d, c, f) },
+      { id: "LightTypesShowcase", name: "光源 ", run: (d, c, f, cv, gui) => runLightTypesShowcase(d, c, f, cv, gui) },
+      { id: "csm", name: "csm ", run: (d, c, f, cv, gui) => runCSMShowcase(d, c, f, cv, gui) },
+      { id: "video", name: "视频材质 ", run: (d, c, f, cv, gui) => runVideoTextureShowcase(d, c, f, cv, gui) },
+      { id: "sampler", name: "采样 ", run: (d, c, f, cv, gui) => runSampler(d, c, f, cv, gui) },
+      { id: "mip", name: "nipmap采样 ", run: (d, c, f, cv, gui) => runMipSampler(d, c, f, cv, gui) },
+        { id: "renderTotexture", name: "渲染到纹理 ", run: (d, c, f, cv, gui) => runRenderToTexture(d, c, f, cv, gui) },
 
          
       { id: "texture3d", name: "3D 空间体积纹理", run: (d, c, f, cv) => runTexture3D(d, c, f, cv) },
@@ -157,8 +168,11 @@ const demoCategories: DemoCategory[] = [
       { id: "multiplePipelines", name: "Compute-Render 交互", run: (d, c, f, cv) => runMultiplePipelines(d, c, f, cv) },
   { id: "TextureAnimation", name: "动态纹理动画", run: (d, c, f, cv,gui) => runTextureAnimationShowcase(d, c, f, cv,gui) },
 { id: "fireAnimation", name: "火焰", run: (d, c, f, cv,gui) => runFireTextureAnimationShowcase(d, c, f, cv,gui) },
+{ id: "gpuculling", name: "gpu剔除", run: (d, c, f, cv,gui) => runGpuCulling(d, c, f, cv,gui) },
+{ id: "hizculling", name: "hiz剔除", run: (d, c, f, cv,gui) => runHizOcclusionCulling(d, c, f, cv,gui) },
+{ id: "depthtest", name: "深度测试", run: (d, c, f, cv,gui) => runDepthTest(d, c, f, cv,gui) },
 
-      
+   
     ],
   },
   {
