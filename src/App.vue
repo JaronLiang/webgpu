@@ -56,6 +56,28 @@ import { runGpuCulling } from "./examples/gpuCulling";
 import { runHizOcclusionCulling } from "./examples/hizOcclusionCulling";
 import { runDepthTest } from "./examples/depth_test";
 import { runRenderToTexture } from "./examples/render_to_texture";
+import { runAIInference } from "./examples/aiInferenceGPU";
+import { runAIInferenceExt } from "./examples/aiInferenceGPUExt";
+import { runFXAA } from "./examples/aa_fxaa";
+import { runMSAA } from "./examples/aa_msaa";
+import { runTAA } from "./examples/aa_taa";
+import { runAntiAliasingShowcase } from "./examples/antiAliasingShowcase";
+import { runTSR } from "./examples/sr_tsr";
+import { runFSR } from "./examples/sr_fsr";
+import { runFeedForward3DGS } from "./examples/gaussian_splatting";
+import { runLightProbe } from "./examples/light_probe";
+import { runSSR } from "./examples/ssr";
+import { runEnvMap } from "./examples/envmap";
+import { runSelectiveBloom } from "./examples/selective_bloom";
+import { runToneMapping } from "./examples/tonemapping";
+import { runSSGI } from "./examples/ssgi";
+import { runWaterPro } from "./examples/waterpro";
+import { runHBAO } from "./examples/hbao";
+import {  runSSAO } from "./examples/ssao";
+import { runAtomicReduction } from "./examples/atomic_reduction";
+import { runNaniteMeshlets } from "./examples/nanite_meshlet_culling";
+import { runGLTFPBRqingqi } from "./examples/qingqipbr";
+import { runFSR2Demo } from "./examples/fsr2Demo";
 
 export type CleanupFunction = () => void;
 
@@ -106,6 +128,12 @@ const demoCategories: DemoCategory[] = [
       name: "DamagedHelmet (glTF PBR)",
       run: (d, c, f, cv, gui) => runGLTFPBR(d, c, f, cv, gui),
     },
+{
+      id: "qingqi",
+      name: "qingqi (glTF PBR)",
+      run: (d, c, f, cv, gui) => runGLTFPBRqingqi(d, c, f, cv, gui),
+    },
+    
      {
       id: "opaqueAndTransparent",
       name: "半透明物体",
@@ -120,6 +148,11 @@ const demoCategories: DemoCategory[] = [
       id: "GaussianSplat",
       name: "高斯",
       run: (d, c, f, cv, gui) => runGaussianSplatting(d, c, f),
+    },
+  {
+      id: "forwardGaussianSplat",
+      name: "前馈高斯",
+      run: (d, c, f, cv, gui) => runFeedForward3DGS(d, c, f, cv, gui),
     },
 
 
@@ -146,6 +179,7 @@ const demoCategories: DemoCategory[] = [
           return await runComputeBarrier(d, c, f);
         },
       },
+      { id: "automic", name: "automic原子性", run: (d, c, f, cv, gui) => runAtomicReduction(d, c, f, cv, gui) },
       { id: "skybox", name: "3D 全景天空盒 (Cubemap)", run: (d, c, f, cv) => runSkybox(d, c, f, cv) },
          { id: "hdrSkybox", name: "hdr 全景天空盒 (Cubemap)", run: (d, c, f, cv, gui) => runHdrSkybox(d, c, f, cv, gui) },
       
@@ -171,6 +205,7 @@ const demoCategories: DemoCategory[] = [
 { id: "gpuculling", name: "gpu剔除", run: (d, c, f, cv,gui) => runGpuCulling(d, c, f, cv,gui) },
 { id: "hizculling", name: "hiz剔除", run: (d, c, f, cv,gui) => runHizOcclusionCulling(d, c, f, cv,gui) },
 { id: "depthtest", name: "深度测试", run: (d, c, f, cv,gui) => runDepthTest(d, c, f, cv,gui) },
+{ id: "mashlet", name: "meshlets简化", run: (d, c, f, cv,gui) => runNaniteMeshlets(d, c, f, cv,gui) },
 
    
     ],
@@ -185,7 +220,11 @@ const demoCategories: DemoCategory[] = [
     { id: "VolumetricLight", name: "体积光", run: (d, c, f, cv) => runVolumetricLight(d, c, f) },
  { id: "raymarching", name: "光线步进", run: (d, c, f, cv) => runRaymarching(d, c, f) },
 { id: "runGI", name: "全局gi", run: (d, c, f, cv) => runGIOptimized(d, c, f) },
+{ id: "ssGI", name: "ssgi", run: (d, c, f, cv, gui) => runSSGI(d, c, f, cv, gui) },
 { id: "water", name: "水体", run: (d, c, f, cv) => runWater(d, c, f) },
+{ id: "waterpro", name: "水体渲染", run: (d, c, f,  cv,gui) => runWaterPro(d, c, f, cv,gui) },
+
+
 { id: "FluidSimulation", name: "流体模拟", run: (d, c, f, cv,gui) => runFluidSimulation(d, c, f) },
         
       
@@ -242,6 +281,95 @@ const demoCategories: DemoCategory[] = [
       run: (d, c, f, cv, gui) => runBatchMarkersShowcase(d, c, f,cv, gui),
     },
 
+  ],
+},
+
+  {
+  id: "ai",
+  name: "ai相关",
+  children: [
+    {
+      id: "aiBaseextent",
+      name: "推理 ",
+      run: (d, c, f, cv, gui) => runAIInference(d),
+    },
+  
+      {
+      id: "aiextent",
+      name: "推理增强 ",
+      run: (d, c, f, cv, gui) => runAIInferenceExt(d),
+    },
+    
+  ],
+},
+
+
+  {
+  id: "post",
+  name: "全局效果",
+  children: [
+ 
+ {
+      id: "aa",
+      name: "aa抗锯齿 ",
+      run: (d, c, f, cv, gui) => runAntiAliasingShowcase(d,c, f),
+    },
+ {
+      id: "tsr",
+      name: "tsr",
+      run: (d, c, f, cv, gui) => runTSR(d,c, f),
+    },
+ {
+      id: "fsr",
+      name: "fsr ",
+      run: (d, c, f, cv, gui) => runFSR(d,c, f),
+    },
+
+    {
+      id: "fsr2",
+      name: "fsr2 ",
+      run: (d, c, f, cv, gui) => runFSR2Demo(d,c, f, cv, gui),
+    },
+     {
+      id: "probe",
+      name: "光照探针 ",
+      run: (d, c, f, cv, gui) => runLightProbe(d,c, f, cv, gui),
+    },
+
+  {
+      id: "ssr",
+      name: "屏幕空间反射 ",
+      run: (d, c, f, cv, gui) => runSSR(d,c, f, cv, gui),
+    },
+
+     {
+      id: "env",
+      name: "环境贴图 ",
+      run: (d, c, f, cv, gui) => runEnvMap(d,c, f, cv, gui),
+    },
+
+     {
+      id: "bloom",
+      name: "泛光 ",
+      run: (d, c, f, cv, gui) => runSelectiveBloom(d,c, f, cv, gui),
+    },
+
+    
+     {
+      id: "tonemapping",
+      name: "色彩映射 ",
+      run: (d, c, f, cv, gui) => runToneMapping(d,c, f, cv, gui),
+    },
+      {
+      id: "hbao",
+      name: "hbao ",
+      run: (d, c, f, cv, gui) => runHBAO(d,c, f, cv, gui),
+    },
+      {
+      id: "ssao",
+      name: "ssao ",
+      run: (d, c, f, cv, gui) => runSSAO(d,c, f, cv, gui),
+    },
   ],
 },
 

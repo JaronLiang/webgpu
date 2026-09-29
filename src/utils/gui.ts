@@ -1,5 +1,8 @@
 // src/utils/gui.ts
 export class GUIController {
+  listen() {
+      throw new Error("Method not implemented.");
+  }
   private inputEl!: HTMLInputElement;
   private valSpan!: HTMLSpanElement;
   private _name: string;
