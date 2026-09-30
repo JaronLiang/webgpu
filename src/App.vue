@@ -92,6 +92,15 @@ import { runConeTracing } from "./examples/coneTracing";
 import { runGBufferVisualizer } from "./examples/gbufferVisualizer";
 import { runPlanetaryClouds } from "./examples/planetaryClouds";
 import { runGaussianSplattingspz } from "./examples/gaussianSplattingSPZ";
+import { runTileBased } from "./examples/tileBased";
+import { runVirtualShadowMap } from "./examples/virtualShadowMap";
+import { runRTEComparison } from "./examples/rteComparison";
+import { runVolumetricSmoke } from "./examples/volumetricSmoke";
+import { runChaosCloth } from "./examples/chaosCloth";
+import { runChaosFlesh } from "./examples/chaosFlesh";
+import { runChaosVehicles } from "./examples/chaosVeicles";
+import { runChaosDestruction } from "./core/chaosDestruction";
+import { runControlRig } from "./examples/controlRig";
 
 export type CleanupFunction = () => void;
 
@@ -133,6 +142,8 @@ const demoCategories: DemoCategory[] = [
       { id: "runSubgroup", name: "subGroup", run: (d, c, f) => runSubgroup(d, c, f) },
       { id: "runDrawIndexedIndirect", name: "间接索引绘制", run: (d, c, f) => runDrawIndexedIndirect(d, c, f) },
       { id: "runDrawIndirect", name: "间接绘制", run: (d, c, f) => runDrawIndirect(d, c, f) },
+      { id: "tilebase", name: "tilebase", run: (d, c, f, cv, gui) => runTileBased(d, c, f, cv, gui) },
+      { id: "rte", name: "rte", run: (d, c, f, cv, gui) => runRTEComparison(d, c, f, cv, gui) },
     ],
   },
   {
@@ -174,6 +185,7 @@ const demoCategories: DemoCategory[] = [
       { id: "earlyz", name: "Early-Z 提前测试", run: (d, c, f, cv, gui) => runEarlyZ(d, c, f, cv, gui) },
       { id: "shadow", name: "动态光照阴影 (ShadowMap)", run: (d, c, f) => runDynamicShadowMap(d, c, f) },
       { id: "sofashadow", name: "软阴影 ", run: (d, c, f) => runSoftShadow(d, c, f) },
+      { id: "virtualShadow", name: "虚拟阴影", run: (d, c, f, cv, gui) => runVirtualShadowMap(d, c, f, cv, gui) },
       { id: "LightTypesShowcase", name: "光源 ", run: (d, c, f, cv, gui) => runLightTypesShowcase(d, c, f, cv, gui) },
       { id: "csm", name: "csm ", run: (d, c, f, cv, gui) => runCSMShowcase(d, c, f, cv, gui) },
       { id: "video", name: "视频材质 ", run: (d, c, f, cv, gui) => runVideoTextureShowcase(d, c, f, cv, gui) },
@@ -202,6 +214,7 @@ const demoCategories: DemoCategory[] = [
     children: [
       { id: "volumerun", name: "Raymarching 动态云雾", run: (d, c, f, cv) => runVolumeRendering(d, c, f, cv) },
       { id: "VolumetricFog", name: "体积雾", run: (d, c, f, cv) => runVolumetricFog(d, c, f) },
+      { id: "VolumetricSmoke", name: "体积烟雾", run: (d, c, f,  cv, gui) => runVolumetricSmoke(d, c, f, cv, gui) },
       { id: "AtmosphericScattering", name: "大气渲染", run: (d, c, f, cv) => runAtmosphericScattering(d, c, f) },
       { id: "VolumetricLight", name: "体积光", run: (d, c, f, cv) => runVolumetricLight(d, c, f) },
       { id: "raymarching", name: "光线步进", run: (d, c, f, cv) => runRaymarching(d, c, f) },
@@ -275,7 +288,20 @@ const demoCategories: DemoCategory[] = [
     children: [
       { id: "skiinning", name: "gpu皮肤动画 ", run: (d, c, f, cv, gui) => runGPUSkinningDemo(d, c, f, cv, gui) },
       { id: "car", name: "轨迹运动", run: (d, c, f, cv, gui) => runCarAnimate(d, c, f, cv, gui) },
+      
       { id: "kcompute", name: "计算", run: (d, c, f, cv, gui) => runComputePro(d, c, f, cv, gui) },
+      { id: "controlRig", name: "骨骼", run: (d, c, f, cv, gui) => runControlRig(d, c, f, cv, gui) },
+    ],
+  },
+   {
+    id: "chao",
+    name: "物理引擎",
+    children: [
+      { id: "chaoCloth", name: "布料模拟 ", run: (d, c, f, cv, gui) => runChaosCloth(d, c, f, cv, gui) },
+      { id: "chaoflesh", name: "软体模拟 ", run: (d, c, f, cv, gui) => runChaosFlesh(d, c, f, cv, gui) },
+      { id: "chaoVehicles", name: "载具模拟 ", run: (d, c, f, cv, gui) => runChaosVehicles(d, c, f, cv, gui) },
+      { id: "chaoDestruction", name: "破坏模拟 ", run: (d, c, f, cv, gui) => runChaosDestruction(d, c, f, cv, gui) },
+      
     ],
   },
 ];
