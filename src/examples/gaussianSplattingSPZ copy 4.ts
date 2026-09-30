@@ -51,11 +51,7 @@ export interface GaussianCloudData {
   radius: number;
 }
 
-function sigmoid(x: number): number {
-  return 1.0 / (1.0 + Math.exp(-x));
-}
-
-// ==================== 彻底纠正的 SPZ 解码器 ====================
+// ==================== 严格标准版 SPZ 解码器 ====================
 async function parseSPZ(buffer: ArrayBuffer): Promise<GaussianCloudData> {
   const ds = new DecompressionStream("gzip");
   const writer = ds.writable.getWriter();
@@ -75,7 +71,7 @@ async function parseSPZ(buffer: ArrayBuffer): Promise<GaussianCloudData> {
   const uint8 = new Uint8Array(decompressed);
   let offset = 16;
 
-  // 1. 位置读取 (适配 WebGPU 标准相机空间，反转 Y 和 Z)
+  // 1. 位置读取 (标准 3DGS 坐标系向 WebGPU 坐标系适配：反转 Y 和 Z)
   if (fractionalBits > 0) {
     const scaleFactor = 1.0 / (1 << fractionalBits);
     for (let i = 0; i < count; i++) {
@@ -100,15 +96,13 @@ async function parseSPZ(buffer: ArrayBuffer): Promise<GaussianCloudData> {
     }
   }
 
-  // 2. Alpha 读取 (Sigmoid 激活修正，杜绝半透明无脑堆叠泛白)
+  // 2. Alpha (SPZ 规范中已做 Sigmoid 压缩，直接线性归一化)
   const alphas = new Float32Array(count);
   for (let i = 0; i < count; i++) {
-    // 很多 3DGS 训练输出的 alpha 是 logit，SPZ 线性量化到 uint8
-    const rawA = uint8[offset++] / 255.0;
-    alphas[i] = rawA;
+    alphas[i] = uint8[offset++] / 255.0;
   }
 
-  // 3. 颜色读取 (标准 SH0 转换为物理 Linear RGB)
+  // 3. 颜色读取 (SH0 真实色彩还原)
   const SH_C0 = 0.28209479177387814;
   for (let i = 0; i < count; i++) {
     const rawR = (uint8[offset + 0] - 128.0) / 64.0;
@@ -118,6 +112,13 @@ async function parseSPZ(buffer: ArrayBuffer): Promise<GaussianCloudData> {
     let r = rawR * SH_C0 + 0.5;
     let g = rawG * SH_C0 + 0.5;
     let b = rawB * SH_C0 + 0.5;
+
+    // 超界回退保护
+    if (r < 0.0 || r > 1.0 || g < 0.0 || g > 1.0 || b < 0.0 || b > 1.0) {
+      r = uint8[offset + 0] / 255.0;
+      g = uint8[offset + 1] / 255.0;
+      b = uint8[offset + 2] / 255.0;
+    }
 
     colors[i * 4 + 0] = Math.max(0.0, Math.min(1.0, r));
     colors[i * 4 + 1] = Math.max(0.0, Math.min(1.0, g));
@@ -131,32 +132,35 @@ async function parseSPZ(buffer: ArrayBuffer): Promise<GaussianCloudData> {
     scales[i] = Math.exp(uint8[offset++] / 16.0 - 10.0);
   }
 
-  // 5. 旋转四元数解码 【核心修复】：标准的 (x, y, z, w) 与坐标系反转
-  // 因为位置做了 (x, -y, -z)，所以四元数对应的变换是绕 X 轴旋转 180 度，即 (x, -y, -z, w) 形式！
+  // 5. 旋转四元数解码 (精准映射 SO(3) 翻转变换)
+  // 当位置变换 P' = diag(1, -1, -1) * P 时，对应的四元数必须准确构造
   for (let i = 0; i < count; i++) {
-    const qx = (uint8[offset + 0] - 128.0) / 128.0;
-    const qy = (uint8[offset + 1] - 128.0) / 128.0;
-    const qz = (uint8[offset + 2] - 128.0) / 128.0;
-    const sumSq = qx * qx + qy * qy + qz * qz;
-    const qw = Math.sqrt(Math.max(0.0, 1.0 - sumSq));
+    const rx = (uint8[offset + 0] - 128.0) / 128.0;
+    const ry = (uint8[offset + 1] - 128.0) / 128.0;
+    const rz = (uint8[offset + 2] - 128.0) / 128.0;
+    const sumSq = rx * rx + ry * ry + rz * rz;
+    const rw = Math.sqrt(Math.max(0.0, 1.0 - sumSq));
 
-    // 严谨手性变换：只反转 Y 和 Z 的虚部分量，恢复椭球正确的空间物理指向
-    const fx = qx;
-    const fy = -qy;
-    const fz = -qz;
-    const fw = qw;
+    // 严密适配：绕 X 轴旋转 180° 的四元数乘积 q' = (rw, -rz, ry, -rx)
+    // 使得旋转后的 3D 椭球体与翻转后的几何完全贴合，根除拉丝毛刺
+    const qx = rw;
+    const qy = -rz;
+    const qz = ry;
+    const qw = -rx;
 
-    const len = Math.hypot(fx, fy, fz, fw) || 1.0;
-    rotations[i * 4 + 0] = fx / len;
-    rotations[i * 4 + 1] = fy / len;
-    rotations[i * 4 + 2] = fz / len;
-    rotations[i * 4 + 3] = fw / len;
+    const len = Math.hypot(qx, qy, qz, qw) || 1.0;
+    rotations[i * 4 + 0] = qx / len;
+    rotations[i * 4 + 1] = qy / len;
+    rotations[i * 4 + 2] = qz / len;
+    rotations[i * 4 + 3] = qw / len;
     offset += 3;
   }
 
+  // 6. 跳过额外高阶球谐系数
   const shCoeffs = shDegree > 0 ? ((shDegree + 1) * (shDegree + 1) - 1) * 3 : 0;
   offset += count * shCoeffs;
 
+  // 7. 计算中心及包围半径
   let sumX = 0, sumY = 0, sumZ = 0;
   for (let i = 0; i < count; i++) {
     sumX += positions[i * 3 + 0];
@@ -180,7 +184,7 @@ async function parseSPZ(buffer: ArrayBuffer): Promise<GaussianCloudData> {
   };
 }
 
-// ==================== 高性能排序 Worker ====================
+// ==================== 高性能基数排序 Worker ====================
 const workerBlob = new Blob([`
   function fastRadixSort(depths, indices, count) {
     let minD = depths[0], maxD = depths[0];
@@ -230,7 +234,7 @@ const workerBlob = new Blob([`
                     (positions[i * 3 + 2] - camEye[2]) * viewDir[2];
       }
       fastRadixSort(depths, indices, count);
-      // 从后往前绘制，确保透明混合完全正确
+      // 由远及近渲染 (Back-to-front)
       indices.reverse();
       self.postMessage({ type: 'sorted', generation, indices: indices.buffer }, [indices.buffer]);
     }
@@ -249,7 +253,7 @@ export function runGaussianSplattingspz(
   const sortWorker = new Worker(URL.createObjectURL(workerBlob));
   let currentGeneration = 0;
 
-  // Quad 基础顶点 [-2, 2]
+  // 标准单位 Quad 顶点：范围 [-2, 2] 对应 2-Sigma 半径展开
   const quadVertices = new Float32Array([
     -2.0, -2.0,
      2.0, -2.0,
@@ -269,7 +273,7 @@ export function runGaussianSplattingspz(
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
 
-  // ================= 严格规范 WGSL 着色器 =================
+  // ================= 严格符合 3DGS 论文数学原型的 WGSL 着色器 =================
   const gsShaderWGSL = `
     struct Uniforms {
       view: mat4x4f,
@@ -277,7 +281,6 @@ export function runGaussianSplattingspz(
       camPos: vec4f,
       viewport: vec2f,
       focal: vec2f,
-      params: vec4f, // x: lowpass, y: gammaEnabled, z: unused, w: unused
     };
     @group(0) @binding(0) var<uniform> u: Uniforms;
 
@@ -299,6 +302,7 @@ export function runGaussianSplattingspz(
 
     fn quatToMat3(q: vec4f) -> mat3x3f {
       let x = q.x; let y = q.y; let z = q.z; let w = q.w;
+      // 列主序构建精确旋转矩阵
       return mat3x3f(
         vec3f(1.0 - 2.0*(y*y + z*z), 2.0*(x*y + w*z), 2.0*(x*z - w*y)),
         vec3f(2.0*(x*y - w*z), 1.0 - 2.0*(x*x + z*z), 2.0*(y*z + w*x)),
@@ -313,12 +317,12 @@ export function runGaussianSplattingspz(
 
       // 相机空间变换
       let pView = (u.view * vec4f(g.pos.xyz, 1.0)).xyz;
+      // 剔除相机背面粒子
       if (pView.z >= -0.05) {
         out.pos = vec4f(0.0, 0.0, 2.0, 1.0);
         return out;
       }
 
-      // 计算 3D 协方差 Sigma = R * S * S^T * R^T
       let R = quatToMat3(g.rot);
       let S = mat3x3f(
         vec3f(g.scale.x, 0.0, 0.0),
@@ -328,75 +332,60 @@ export function runGaussianSplattingspz(
       let M = R * S;
       let Sigma = M * transpose(M);
 
-      // 观察矩阵旋转部分
+      // 从 u.view 提取世界到相机空间的旋转变换 W
       let W = mat3x3f(
         u.view[0].xyz,
         u.view[1].xyz,
         u.view[2].xyz
       );
 
+      // 相机空间 3D 协方差
       let Vrk = W * Sigma * transpose(W);
 
-      // 投影雅可比矩阵 J
       let fx = u.focal.x;
       let fy = u.focal.y;
-      let tz = -pView.z;
-      let tz2 = tz * tz;
+      let rz = 1.0 / (-pView.z);
+      let rz2 = rz * rz;
 
+      // 投影雅可比矩阵 J
       let J = mat3x2f(
-        vec2f(fx / tz, 0.0),
-        vec2f(0.0, fy / tz),
-        vec2f(-(fx * pView.x) / tz2, -(fy * pView.y) / tz2)
+        vec2f(fx * rz, 0.0),
+        vec2f(0.0, fy * rz),
+        vec2f((fx * pView.x) * rz2, (fy * pView.y) * rz2)
       );
 
-      // 2D 投影协方差
+      // 屏幕空间 2D 协方差矩阵: cov2d = J * Vrk * J^T
       let cov2d = J * Vrk * transpose(J);
 
-      // 极轻微低通滤波 (抗锯齿，不让物体发虚)
-      let lowPass = max(u.params.x, 0.1);
-      let a = cov2d[0][0] + lowPass;
+      // 低通滤波抗混叠保护 (+0.3 像素方差)
+      let a = cov2d[0][0] + 0.3;
       let b = cov2d[0][1];
-      let c = cov2d[1][1] + lowPass;
+      let c = cov2d[1][1] + 0.3;
 
       let det = a * c - b * b;
-      if (det <= 1e-6) {
+      if (det <= 0.00001) {
         out.pos = vec4f(0.0, 0.0, 2.0, 1.0);
         return out;
       }
 
+      // 计算椭圆二次型逆矩阵 (Conic)
       let invDet = 1.0 / det;
       let conic = vec3f(c * invDet, -b * invDet, a * invDet);
 
-      // 解析求特征值 (计算包围盒长短半轴)
+      // 正确计算特征值与最大主轴半径（3-Sigma 准则），杜绝针刺拉丝
       let mid = 0.5 * (a + c);
-      let term = sqrt(max(0.01, (a - c) * (a - c) * 0.25 + b * b));
+      let term = sqrt(max(0.1, mid * mid - det));
       let lambda1 = mid + term;
-      let lambda2 = max(0.1, mid - term);
-
-      // 3.0 倍标准差足够覆盖全部可见能量
+      let lambda2 = mid - term;
       let maxRadius = ceil(3.0 * sqrt(max(lambda1, lambda2)));
-      if (maxRadius > 1024.0 || maxRadius < 0.5) {
+
+      if (maxRadius > 1024.0) {
         out.pos = vec4f(0.0, 0.0, 2.0, 1.0);
         return out;
       }
 
-      // 计算主轴方向旋转角
-      let theta = 0.5 * atan2(2.0 * b, a - c);
-      let cosT = cos(theta);
-      let sinT = sin(theta);
-
-      let r1 = 3.0 * sqrt(lambda1);
-      let r2 = 3.0 * sqrt(lambda2);
-
-      // quadPos 在 [-2, 2] 间，乘 0.5 变为 [-1, 1] 紧致包裹
-      let localX = (quadPos.x * 0.5) * r1;
-      let localY = (quadPos.y * 0.5) * r2;
-
-      // 旋转回屏幕对齐像素坐标
-      let pixelOffset = vec2f(
-        cosT * localX - sinT * localY,
-        sinT * localX + cosT * localY
-      );
+      // 平移顶点到像素空间包围范围
+      let pixelOffset = quadPos * (maxRadius / 2.0);
 
       let pProj = u.proj * vec4f(pView, 1.0);
       let centerNDC = pProj.xy / pProj.w;
@@ -413,6 +402,8 @@ export function runGaussianSplattingspz(
     @fragment
     fn fs_main(in: VertexOutput) -> @location(0) vec4f {
       let d = in.coord;
+
+      // 计算标准马氏距离 (Mahalanobis Distance)
       let power = -0.5 * (in.conic.x * d.x * d.x + in.conic.z * d.y * d.y) - in.conic.y * d.x * d.y;
 
       if (power > 0.0) { discard; }
@@ -420,17 +411,10 @@ export function runGaussianSplattingspz(
       let G = exp(power);
       let alpha = in.color.a * G;
 
-      // 严厉截断无效碎片，杜绝大面积微弱半透明堆积引起的灰白发虚
-      if (alpha < 0.01) { discard; }
+      if (alpha < 0.005) { discard; }
 
-      var rgb = in.color.rgb;
-      if (u.params.y > 0.5) {
-        // 色彩伽马对比度校正：让细节锐化、五官立体深邃
-        rgb = pow(rgb, vec3f(1.0 / 1.8));
-      }
-
-      // 采用预乘 Alpha 输出
-      return vec4f(rgb * alpha, alpha);
+      // 预乘 Alpha 输出 (Premultiplied Alpha)
+      return vec4f(in.color.rgb * alpha, alpha);
     }
   `;
 
@@ -564,8 +548,6 @@ export function runGaussianSplattingspz(
     selectedPreset: "Three.js 官方狮子 (lion.v3.spz)",
     customUrl: "",
     autoRotate: true,
-    sRGBGamma: true,
-    lowPassFilter: 0.15, // 黄金参数：既消除了锯齿，又维持真实物体的锐利细节
     selectLocalFile: () => {
       fileInput.value = "";
       fileInput.click();
@@ -603,7 +585,7 @@ export function runGaussianSplattingspz(
     }
   };
 
-  gui.title("WebGPU 3D GS (终极高清实景版)");
+  gui.title("WebGPU 3D GS (平滑高清完美版)");
   gui.add(settings, "status").name("运行状态").listen().disable();
   gui.add(settings, "pointCount").name("粒子数").listen().disable();
   gui.add(settings, "selectedPreset", Object.keys(onlinePresets)).name("在线预设");
@@ -611,10 +593,8 @@ export function runGaussianSplattingspz(
   gui.add(settings, "loadModel").name("🚀 加载选中模型");
   gui.add(settings, "selectLocalFile").name("📂 打开本地 SPZ");
   gui.add(settings, "autoRotate").name("自动环绕");
-  gui.add(settings, "sRGBGamma").name("色彩伽马校正 (去灰)");
-  gui.add(settings, "lowPassFilter", 0.05, 0.4, 0.01).name("抗混叠平滑度");
 
-  // 鼠标交互控制
+  // 鼠标交互平移与旋转
   let isDragging = false, dragButton = 0, lastX = 0, lastY = 0;
   canvas.addEventListener("contextmenu", (e) => e.preventDefault());
   canvas.addEventListener("pointerdown", (e) => {
@@ -651,6 +631,7 @@ export function runGaussianSplattingspz(
     camera.radius = Math.max(0.05, camera.radius * Math.exp(e.deltaY * 0.001));
   }, { passive: false });
 
+  // 默认启动载入狮子模型
   settings.loadModel();
 
   let animId: number;
@@ -712,7 +693,6 @@ export function runGaussianSplattingspz(
     uniformCPU.set(proj, 16);
     uniformCPU.set([eye[0], eye[1], eye[2], 1.0], 32);
     uniformCPU.set([renderWidth, renderHeight, focalX, focalY], 36);
-    uniformCPU.set([settings.lowPassFilter, settings.sRGBGamma ? 1.0 : 0.0, 0.0, 0.0], 40);
 
     device.queue.writeBuffer(uniformBuffer, 0, uniformCPU);
 
