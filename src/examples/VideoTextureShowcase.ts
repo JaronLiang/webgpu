@@ -1,5 +1,5 @@
 import type { SimpleGUI } from "../utils/gui";
-
+import GUI from "lil-gui";
 // ==========================================
 // 1. 基础 3D 矩阵数学 (免第三方依赖)
 // ==========================================
@@ -76,7 +76,7 @@ export function runVideoTextureShowcase(
   context: GPUCanvasContext,
   format: GPUTextureFormat,
   canvas: HTMLCanvasElement,
-  gui: SimpleGUI
+  gui: any
 ) {
   // 1. 初始化视频元素并妥善规避浏览器自动播放限制
   const video = document.createElement("video");
@@ -203,10 +203,13 @@ export function runVideoTextureShowcase(
 
   gui.add(state, "autoRotateCamera", 0, 1, 1).name("相机自动环绕");
   gui.add(state, "rotationSpeed", 0.1, 3.0, 0.1).name("旋转速度");
-  gui.addButton("播放/暂停视频", () => {
+const videoControls = {
+  togglePlay: () => {
     if (video.paused) video.play();
     else video.pause();
-  });
+  }
+};
+gui.add(videoControls, "togglePlay").name("播放/暂停视频");
 
   const camera = { distance: 8.5, phi: 20, theta: 0 };
   let isDragging = false, lastX = 0, lastY = 0;

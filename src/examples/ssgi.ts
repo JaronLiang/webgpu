@@ -1,7 +1,7 @@
 // src/examples/ssgi.ts
-import type { SimpleGUI } from "../utils/gui";
-
-// 矩阵计算
+// import type { SimpleGUI } from "../utils/gui";
+import GUI from "lil-gui";
+// ---------------------- 矩阵数学库 ----------------------
 function createPerspectiveMatrix(fovRad: number, aspect: number, near: number, far: number): Float32Array {
   const f = 1.0 / Math.tan(fovRad / 2);
   const out = new Float32Array(16);
@@ -30,34 +30,20 @@ function createLookAtMatrix(eye: number[], center: number[], up: number[]): Floa
   return out;
 }
 
-// 4x4 矩阵求逆 (包含平移与旋转的完整求逆)
-function mat4Invert(m: Float32Array): Float32Array {
+// 严谨相机逆视图矩阵：正交旋转矩阵转置，平移项严格对应 eye
+function createInverseViewMatrix(eye: number[], center: number[], up: number[]): Float32Array {
+  const z = [eye[0] - center[0], eye[1] - center[1], eye[2] - center[2]];
+  const lenZ = 1 / (Math.hypot(z[0], z[1], z[2]) || 1);
+  z[0] *= lenZ; z[1] *= lenZ; z[2] *= lenZ;
+  const x = [up[1] * z[2] - up[2] * z[1], up[2] * z[0] - up[0] * z[2], up[0] * z[1] - up[1] * z[0]];
+  const lenX = 1 / (Math.hypot(x[0], x[1], x[2]) || 1);
+  x[0] *= lenX; x[1] *= lenX; x[2] *= lenX;
+  const y = [z[1] * x[2] - z[2] * x[1], z[2] * x[0] - z[0] * x[2], z[0] * x[1] - z[1] * x[0]];
   const out = new Float32Array(16);
-  const b00 = m[0] * m[5] - m[1] * m[4], b01 = m[0] * m[6] - m[2] * m[4];
-  const b02 = m[0] * m[7] - m[3] * m[4], b03 = m[1] * m[6] - m[2] * m[5];
-  const b04 = m[1] * m[7] - m[3] * m[5], b05 = m[2] * m[7] - m[3] * m[6];
-  const b06 = m[8] * m[13] - m[9] * m[12], b07 = m[8] * m[14] - m[10] * m[12];
-  const b08 = m[8] * m[15] - m[11] * m[12], b09 = m[9] * m[14] - m[10] * m[13];
-  const b10 = m[9] * m[15] - m[11] * m[13], b11 = m[10] * m[15] - m[11] * m[14];
-  const det = b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06;
-  if (!det) return out;
-  const inv = 1.0 / det;
-  out[0] = (m[5]*b11 - m[6]*b10 + m[7]*b09)*inv;
-  out[1] = (-m[1]*b11 + m[2]*b10 - m[3]*b09)*inv;
-  out[2] = (m[13]*b05 - m[14]*b04 + m[15]*b03)*inv;
-  out[3] = (-m[9]*b05 + m[10]*b04 - m[11]*b03)*inv;
-  out[4] = (-m[4]*b11 + m[6]*b08 - m[7]*b07)*inv;
-  out[5] = (m[0]*b11 - m[2]*b08 + m[3]*b07)*inv;
-  out[6] = (-m[12]*b05 + m[14]*b02 - m[15]*b01)*inv;
-  out[7] = (m[8]*b05 - m[10]*b02 + m[11]*b01)*inv;
-  out[8] = (m[4]*b10 - m[5]*b08 + m[7]*b06)*inv;
-  out[9] = (-m[0]*b10 + m[1]*b08 - m[3]*b06)*inv;
-  out[10] = (m[12]*b04 - m[13]*b02 + m[15]*b00)*inv;
-  out[11] = (-m[8]*b04 + m[9]*b02 - m[11]*b00)*inv;
-  out[12] = (-m[4]*b09 + m[5]*b07 - m[6]*b06)*inv;
-  out[13] = (m[0]*b09 - m[1]*b07 + m[2]*b06)*inv;
-  out[14] = (-m[12]*b03 + m[13]*b01 - m[14]*b00)*inv;
-  out[15] = (m[8]*b03 - m[9]*b01 + m[10]*b00)*inv;
+  out[0] = x[0]; out[1] = x[1]; out[2] = x[2]; out[3] = 0;
+  out[4] = y[0]; out[5] = y[1]; out[6] = y[2]; out[7] = 0;
+  out[8] = z[0]; out[9] = z[1]; out[10] = z[2]; out[11] = 0;
+  out[12] = eye[0]; out[13] = eye[1]; out[14] = eye[2]; out[15] = 1;
   return out;
 }
 
@@ -81,39 +67,51 @@ function matrixDifference(a: Float32Array, b: Float32Array): number {
 }
 
 export function runSSGI(
-  device: GPUDevice, context: GPUCanvasContext, format: GPUTextureFormat, canvas: HTMLCanvasElement, gui: SimpleGUI
+  device: GPUDevice, context: GPUCanvasContext, format: GPUTextureFormat, canvas: HTMLCanvasElement, gui: any
 ) {
   const fullWidth = canvas.width || 800;
   const fullHeight = canvas.height || 600;
   const halfWidth = Math.max(1, Math.floor(fullWidth / 2));
   const halfHeight = Math.max(1, Math.floor(fullHeight / 2));
 
-  // 1. 经典 Cornell Box 几何体
+  // 1. Cornell Box 几何体（稍微旋转中心立方体约 18°，以充分展示左右红绿光漫反射截面）
+  const cosA = Math.cos(0.32), sinA = Math.sin(0.32);
+  const rotateY = (x: number, z: number): [number, number] => [x * cosA - z * sinA, x * sinA + z * cosA];
+  
+  const c0 = rotateY(-0.8, -0.8), c1 = rotateY(0.8, -0.8), c2 = rotateY(0.8, 0.8), c3 = rotateY(-0.8, 0.8);
+  const nFront = rotateY(0, 1), nBack = rotateY(0, -1), nRight = rotateY(1, 0), nLeft = rotateY(-1, 0);
+
   const vertices = new Float32Array([
-    // 地板 (灰色)
-    -3,0,-3,  0,1,0,  0.8,0.8,0.8,   3,0,-3,  0,1,0,  0.8,0.8,0.8,   3,0,3,  0,1,0,  0.8,0.8,0.8,
-    -3,0,-3,  0,1,0,  0.8,0.8,0.8,   3,0,3,  0,1,0,  0.8,0.8,0.8,  -3,0,3,  0,1,0,  0.8,0.8,0.8,
-    // 顶板 (灰色)
-    -3,5, 3,  0,-1,0, 0.8,0.8,0.8,   3,5, 3,  0,-1,0, 0.8,0.8,0.8,   3,5,-3,  0,-1,0, 0.8,0.8,0.8,
-    -3,5, 3,  0,-1,0, 0.8,0.8,0.8,   3,5,-3,  0,-1,0, 0.8,0.8,0.8,  -3,5,-3,  0,-1,0, 0.8,0.8,0.8,
-    // 后墙 (白色)
-    -3,0,-3,  0,0,1,  0.8,0.8,0.8,   3,0,-3,  0,0,1,  0.8,0.8,0.8,   3,5,-3,  0,0,1,  0.8,0.8,0.8,
-    -3,0,-3,  0,0,1,  0.8,0.8,0.8,   3,5,-3,  0,0,1,  0.8,0.8,0.8,  -3,5,-3,  0,0,1,  0.8,0.8,0.8,
-    // 左墙 (鲜艳红 - 强溢色源)
-    -3,0, 3,  1,0,0,  0.95,0.05,0.05, -3,0,-3, 1,0,0,  0.95,0.05,0.05, -3,5,-3, 1,0,0, 0.95,0.05,0.05,
-    -3,0, 3,  1,0,0,  0.95,0.05,0.05, -3,5,-3, 1,0,0,  0.95,0.05,0.05, -3,5, 3, 1,0,0, 0.95,0.05,0.05,
-    // 右墙 (鲜艳绿 - 强溢色源)
-     3,0,-3, -1,0,0,  0.05,0.95,0.05,  3,0, 3, -1,0,0, 0.05,0.95,0.05,  3,5, 3, -1,0,0, 0.05,0.95,0.05,
-     3,0,-3, -1,0,0,  0.05,0.95,0.05,  3,5, 3, -1,0,0, 0.05,0.95,0.05,  3,5,-3, -1,0,0, 0.05,0.95,0.05,
-    // 中心白色立方体
-    -0.8,0,0.8, 0,0,1, 0.9,0.9,0.9,   0.8,0,0.8, 0,0,1, 0.9,0.9,0.9,   0.8,2,0.8, 0,0,1, 0.9,0.9,0.9,
-    -0.8,0,0.8, 0,0,1, 0.9,0.9,0.9,   0.8,2,0.8, 0,0,1, 0.9,0.9,0.9,  -0.8,2,0.8, 0,0,1, 0.9,0.9,0.9,
-    -0.8,2,0.8, 0,1,0, 0.9,0.9,0.9,   0.8,2,0.8, 0,1,0, 0.9,0.9,0.9,   0.8,2,-0.8, 0,1,0, 0.9,0.9,0.9,
-    -0.8,2,0.8, 0,1,0, 0.9,0.9,0.9,   0.8,2,-0.8, 0,1,0, 0.9,0.9,0.9, -0.8,2,-0.8, 0,1,0, 0.9,0.9,0.9,
-    -0.8,0,-0.8, -1,0,0, 0.9,0.9,0.9, -0.8,0,0.8, -1,0,0, 0.9,0.9,0.9, -0.8,2,0.8, -1,0,0, 0.9,0.9,0.9,
-    -0.8,0,-0.8, -1,0,0, 0.9,0.9,0.9, -0.8,2,0.8, -1,0,0, 0.9,0.9,0.9, -0.8,2,-0.8, -1,0,0, 0.9,0.9,0.9,
-     0.8,0,0.8, 1,0,0, 0.9,0.9,0.9,   0.8,0,-0.8, 1,0,0, 0.9,0.9,0.9,  0.8,2,-0.8, 1,0,0, 0.9,0.9,0.9,
-     0.8,0,0.8, 1,0,0, 0.9,0.9,0.9,   0.8,2,-0.8, 1,0,0, 0.9,0.9,0.9,  0.8,2,0.8, 1,0,0, 0.9,0.9,0.9,
+    // 地板 (哑光白灰)
+    -3,0,-3,  0,1,0,  0.85,0.85,0.85,   3,0,-3,  0,1,0,  0.85,0.85,0.85,   3,0,3,  0,1,0,  0.85,0.85,0.85,
+    -3,0,-3,  0,1,0,  0.85,0.85,0.85,   3,0,3,  0,1,0,  0.85,0.85,0.85,  -3,0,3,  0,1,0,  0.85,0.85,0.85,
+    // 顶板 (哑光灰)
+    -3,5, 3,  0,-1,0, 0.85,0.85,0.85,   3,5, 3,  0,-1,0, 0.85,0.85,0.85,   3,5,-3,  0,-1,0, 0.85,0.85,0.85,
+    -3,5, 3,  0,-1,0, 0.85,0.85,0.85,   3,5,-3,  0,-1,0, 0.85,0.85,0.85,  -3,5,-3,  0,-1,0, 0.85,0.85,0.85,
+    // 后墙 (白灰)
+    -3,0,-3,  0,0,1,  0.85,0.85,0.85,   3,0,-3,  0,0,1,  0.85,0.85,0.85,   3,5,-3,  0,0,1,  0.85,0.85,0.85,
+    -3,0,-3,  0,0,1,  0.85,0.85,0.85,   3,5,-3,  0,0,1,  0.85,0.85,0.85,  -3,5,-3,  0,0,1,  0.85,0.85,0.85,
+    // 左墙 (鲜艳红 - 主溢色源)
+    -3,0, 3,  1,0,0,  0.95,0.06,0.06, -3,0,-3, 1,0,0,  0.95,0.06,0.06, -3,5,-3, 1,0,0, 0.95,0.06,0.06,
+    -3,0, 3,  1,0,0,  0.95,0.06,0.06, -3,5,-3, 1,0,0,  0.95,0.06,0.06, -3,5, 3, 1,0,0, 0.95,0.06,0.06,
+    // 右墙 (鲜艳翠绿 - 主溢色源)
+     3,0,-3, -1,0,0,  0.06,0.92,0.08,  3,0, 3, -1,0,0, 0.06,0.92,0.08,  3,5, 3, -1,0,0, 0.06,0.92,0.08,
+     3,0,-3, -1,0,0,  0.06,0.92,0.08,  3,5, 3, -1,0,0, 0.06,0.92,0.08,  3,5,-3, -1,0,0, 0.06,0.92,0.08,
+    // 旋转白色立方体 (顶面)
+    c0[0],2,c0[1], 0,1,0, 0.92,0.92,0.92,  c1[0],2,c1[1], 0,1,0, 0.92,0.92,0.92,  c2[0],2,c2[1], 0,1,0, 0.92,0.92,0.92,
+    c0[0],2,c0[1], 0,1,0, 0.92,0.92,0.92,  c2[0],2,c2[1], 0,1,0, 0.92,0.92,0.92,  c3[0],2,c3[1], 0,1,0, 0.92,0.92,0.92,
+    // 立方体 (前侧面)
+    c3[0],0,c3[1], nFront[0],0,nFront[1], 0.92,0.92,0.92,  c2[0],0,c2[1], nFront[0],0,nFront[1], 0.92,0.92,0.92,  c2[0],2,c2[1], nFront[0],0,nFront[1], 0.92,0.92,0.92,
+    c3[0],0,c3[1], nFront[0],0,nFront[1], 0.92,0.92,0.92,  c2[0],2,c2[1], nFront[0],0,nFront[1], 0.92,0.92,0.92,  c3[0],2,c3[1], nFront[0],0,nFront[1], 0.92,0.92,0.92,
+    // 立方体 (右侧面 - 面向绿墙)
+    c2[0],0,c2[1], nRight[0],0,nRight[1], 0.92,0.92,0.92,  c1[0],0,c1[1], nRight[0],0,nRight[1], 0.92,0.92,0.92,  c1[0],2,c1[1], nRight[0],0,nRight[1], 0.92,0.92,0.92,
+    c2[0],0,c2[1], nRight[0],0,nRight[1], 0.92,0.92,0.92,  c1[0],2,c1[1], nRight[0],0,nRight[1], 0.92,0.92,0.92,  c2[0],2,c2[1], nRight[0],0,nRight[1], 0.92,0.92,0.92,
+    // 立方体 (后侧面)
+    c1[0],0,c1[1], nBack[0],0,nBack[1], 0.92,0.92,0.92,   c0[0],0,c0[1], nBack[0],0,nBack[1], 0.92,0.92,0.92,   c0[0],2,c0[1], nBack[0],0,nBack[1], 0.92,0.92,0.92,
+    c1[0],0,c1[1], nBack[0],0,nBack[1], 0.92,0.92,0.92,   c0[0],2,c0[1], nBack[0],0,nBack[1], 0.92,0.92,0.92,   c1[0],2,c1[1], nBack[0],0,nBack[1], 0.92,0.92,0.92,
+    // 立方体 (左侧面 - 面向红墙)
+    c0[0],0,c0[1], nLeft[0],0,nLeft[1], 0.92,0.92,0.92,   c3[0],0,c3[1], nLeft[0],0,nLeft[1], 0.92,0.92,0.92,   c3[0],2,c3[1], nLeft[0],0,nLeft[1], 0.92,0.92,0.92,
+    c0[0],0,c0[1], nLeft[0],0,nLeft[1], 0.92,0.92,0.92,   c3[0],2,c3[1], nLeft[0],0,nLeft[1], 0.92,0.92,0.92,   c0[0],2,c0[1], nLeft[0],0,nLeft[1], 0.92,0.92,0.92,
   ]);
   const vBuffer = device.createBuffer({ size: vertices.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
   device.queue.writeBuffer(vBuffer, 0, vertices);
@@ -123,25 +121,23 @@ export function runSSGI(
   const quadBuffer = device.createBuffer({ size: quadData.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
   device.queue.writeBuffer(quadBuffer, 0, quadData);
 
-  // 统一 Uniform Buffer:
-  // view(16), proj(16), invView(16), prevViewProj(16), camParams(4), settings(4), halfRes(4) = 76 floats -> 分配 384B
-  const uniformBufferSize = 384;
-  const uniformBuffer = device.createBuffer({ size: uniformBufferSize, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-  const cpuUniformData = new Float32Array(uniformBufferSize / 4);
+  // 统一 Uniform Buffer (384 bytes)
+  const uniformBuffer = device.createBuffer({ size: 384, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  const cpuUniformData = new Float32Array(384 / 4);
 
-  // 2. 纹理创建
-  const gColor = device.createTexture({ size: [fullWidth, fullHeight], format: "rgba8unorm", usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
+  // 纹理创建
+  const gColor = device.createTexture({ size: [fullWidth, fullHeight], format: "rgba16float", usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
   const gNormal = device.createTexture({ size: [fullWidth, fullHeight], format: "rg16float", usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
   const gDepth = device.createTexture({ size: [fullWidth, fullHeight], format: "depth24plus", usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
   
-  // 半分辨率纹理
   const currentSSGITex = device.createTexture({ size: [halfWidth, halfHeight], format: "rgba16float", usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
   const ssgiHistoryA = device.createTexture({ size: [halfWidth, halfHeight], format: "rgba16float", usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
   const ssgiHistoryB = device.createTexture({ size: [halfWidth, halfHeight], format: "rgba16float", usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
 
   const pointSampler = device.createSampler({ magFilter: "nearest", minFilter: "nearest" });
-  const linearSampler = device.createSampler({ magFilter: "linear", minFilter: "linear" });
+  const linearSampler = device.createSampler({ magFilter: "linear", minFilter: "linear", addressModeU: "clamp-to-edge", addressModeV: "clamp-to-edge" });
 
+  // 2. Pass 1: G-Buffer 渲染（配置强力物理顶光源，照亮彩墙以产生二次反弹光）
   // 3. Pass 1: G-Buffer
   const gbufferWGSL = `
     struct Uniforms {
@@ -151,15 +147,34 @@ export function runSSGI(
     @group(0) @binding(0) var<uniform> u: Uniforms;
 
     struct VIn { @location(0) pos: vec3f, @location(1) norm: vec3f, @location(2) col: vec3f };
-    struct VOut { @builtin(position) pos: vec4f, @location(0) normalVS: vec3f, @location(1) color: vec3f };
+    struct VOut {
+      @builtin(position) pos: vec4f,
+      @location(0) normalVS: vec3f,
+      @location(1) directLight: vec3f
+    };
 
     @vertex fn vs(v: VIn) -> VOut {
       var o: VOut;
       o.pos = u.proj * u.view * vec4f(v.pos, 1.0);
       o.normalVS = (u.view * vec4f(v.norm, 0.0)).xyz;
-      let lightDir = normalize(vec3f(0.2, 0.9, 0.3));
-      let diff = max(dot(v.norm, lightDir), 0.2);
-      o.color = v.col * diff;
+
+      // 经典 Cornell Box 面光源模拟：
+      // 1. 顶棚偏前的主聚光（照亮彩墙、地面和立方体正面）
+      let mainLightPos = vec3f(0.0, 4.3, 0.8);
+      let toMain = mainLightPos - v.pos;
+      let distMain = length(toMain);
+      let lDir1 = toMain / distMain;
+      let atten1 = 18.0 / (distMain * distMain + 1.5);
+      let diff1 = max(dot(v.norm, lDir1), 0.0) * atten1;
+
+      // 2. 补光（模拟开口处的微弱天光漫射，杜绝背光死黑）
+      let fillLightDir = normalize(vec3f(0.0, 0.3, 1.0));
+      let diff2 = max(dot(v.norm, fillLightDir), 0.0) * 0.25;
+
+      let ambient = 0.15; // 柔和的环境基底光
+      let totalDiff = diff1 + diff2 + ambient;
+
+      o.directLight = v.col * totalDiff;
       return o;
     }
 
@@ -176,7 +191,7 @@ export function runSSGI(
 
     @fragment fn fs(in: VOut) -> GOut {
       var g: GOut;
-      g.color = vec4f(in.color, 1.0);
+      g.color = vec4f(in.directLight, 1.0);
       g.normal = octEncode(normalize(in.normalVS));
       return g;
     }
@@ -191,12 +206,12 @@ export function runSSGI(
         { shaderLocation: 2, offset: 24, format: "float32x3" }
       ]}],
     },
-    fragment: { module: device.createShaderModule({ code: gbufferWGSL }), entryPoint: "fs", targets: [{ format: "rgba8unorm" }, { format: "rg16float" }] },
+    fragment: { module: device.createShaderModule({ code: gbufferWGSL }), entryPoint: "fs", targets: [{ format: "rgba16float" }, { format: "rg16float" }] },
     depthStencil: { depthWriteEnabled: true, depthCompare: "less", format: "depth24plus" },
     primitive: { topology: "triangle-list" }
   });
 
-  // 4. Pass 2: SSGI 计算着色器 (修复横条状白斑：稳健半球采样 + 正确深度剔除)
+  // 3. Pass 2: SSGI 计算（Jitter 步进彻底消除波纹条纹，余弦加权漫反射）
   const ssgiWGSL = `
     struct Uniforms {
       view: mat4x4f, proj: mat4x4f, invView: mat4x4f, prevViewProj: mat4x4f,
@@ -256,64 +271,76 @@ export function runSSGI(
       let normalVS = octDecode(textureSampleLevel(normalTex, pointSamp, uv, 0).xy);
 
       let giIntensity = u.settings.x;
-      let radius = u.settings.y;
+      let maxRadius = u.settings.y;
       let frameIndex = u.settings.z;
 
-      let samplesPerPixel = 4;
-      var indirectSum = vec3f(0.0);
-      let randSeed = hash12(floor(fragCoord.xy));
-
-      // Duff 正交切线基底：防止极轴奇异点退化产生横斑
+      // 切线正交基底
       let signZ = select(-1.0, 1.0, normalVS.z >= 0.0);
       let a = -1.0 / (signZ + normalVS.z);
       let b = normalVS.x * normalVS.y * a;
       let tangent = vec3f(1.0 + signZ * normalVS.x * normalVS.x * a, signZ * b, -signZ * normalVS.x);
       let bitangent = vec3f(b, signZ + normalVS.y * normalVS.y * a, -normalVS.y);
 
-      for (var s = 0; s < samplesPerPixel; s++) {
-        let fi = f32(s) + randSeed;
-        let phi = fi * 2.39996 + frameIndex * 1.618;
-        let cosTheta = sqrt(1.0 - (f32(s) + 0.5) / f32(samplesPerPixel));
-        let sinTheta = sqrt(1.0 - cosTheta * cosTheta);
+      let samples = 6;
+      let steps = 10;
+      var indirectAccum = vec3f(0.0);
 
-        let rayDirVS = tangent * (cos(phi) * sinTheta) + bitangent * (sin(phi) * sinTheta) + normalVS * cosTheta;
+      let screenJitter = hash12(floor(fragCoord.xy) + vec2f(frameIndex * 1.618));
 
-        // 起步偏移，彻底杜绝自相交引发的横斑
-        var marchPos = posVS + normalVS * (0.05 + linearZ * 0.005);
-        let stepDist = radius * 0.25;
+      for (var s = 0; s < samples; s++) {
+        let fSample = f32(s);
+        let phi = (fSample + screenJitter) * 2.39996 + frameIndex * 0.8;
+        let cosTheta = sqrt((fSample + 0.5) / f32(samples));
+        let sinTheta = sqrt(max(0.0, 1.0 - cosTheta * cosTheta));
 
-        for (var step = 1; step <= 4; step++) {
-          marchPos += rayDirVS * stepDist;
+        // 半球 Cosine-Weighted 采样射线
+        let rayDirVS = normalize(tangent * (cos(phi) * sinTheta) + bitangent * (sin(phi) * sinTheta) + normalVS * cosTheta);
+
+        // 引入步长抖动（彻底打破等高线步进波纹假影）
+        let rayJitter = hash12(vec2f(screenJitter, fSample));
+        var currentDist = (0.06 + linearZ * 0.005) + (maxRadius / f32(steps)) * rayJitter;
+        let stepDelta = maxRadius / f32(steps);
+
+        for (var i = 0; i < steps; i++) {
+          let marchPos = posVS + rayDirVS * currentDist;
           let proj = projectPosToUV(marchPos);
 
-          if (proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0) { break; }
+          if (proj.x < 0.01 || proj.x > 0.99 || proj.y < 0.01 || proj.y > 0.99) { break; }
 
           let hitRawZ = textureSampleLevel(depthTex, pointSamp, proj.xy, 0);
-          if (hitRawZ >= 0.9999) { continue; }
+          if (hitRawZ >= 0.9999) {
+            currentDist += stepDelta;
+            continue;
+          }
 
           let hitLinearZ = getLinearDepth(hitRawZ);
           let deltaZ = proj.z - hitLinearZ;
 
-          // 核心厚度区间判定：防止把墙面/背景误认成溢色
-          let thickness = max(0.04, hitLinearZ * 0.03);
+          // 景深厚度测试：动态厚度抑制漏光与穿透
+          let thickness = max(0.08, hitLinearZ * 0.035);
 
-          if (deltaZ > 0.01 && deltaZ < thickness) {
-            let hitCol = textureSampleLevel(colorTex, pointSamp, proj.xy, 0).rgb;
+          if (deltaZ > 0.015 && deltaZ < thickness) {
             let hitNormal = octDecode(textureSampleLevel(normalTex, pointSamp, proj.xy, 0).xy);
+            
+            // 剔除同平面自碰撞
+            if (dot(normalVS, hitNormal) > 0.96 && currentDist < 0.2) {
+              currentDist += stepDelta;
+              continue;
+            }
 
-            let receiverWeight = max(dot(normalVS, rayDirVS), 0.0);
+            let hitColor = textureSampleLevel(colorTex, pointSamp, proj.xy, 0).rgb;
             let bounceWeight = max(dot(hitNormal, -rayDirVS), 0.0);
-            let weight = receiverWeight * bounceWeight;
+            let distAtten = 1.0 / (1.0 + currentDist * currentDist * 0.6);
 
-            // 抑制极端过亮值 (Firefly clamp)
-            let bounceLight = min(hitCol * weight, vec3f(1.5));
-            indirectSum += bounceLight * (1.0 / f32(samplesPerPixel));
+            indirectAccum += hitColor * (bounceWeight * distAtten);
             break;
           }
+          currentDist += stepDelta;
         }
       }
 
-      return vec4f(indirectSum * giIntensity, 1.0);
+      let avgIndirect = (indirectAccum / f32(samples)) * giIntensity;
+      return vec4f(avgIndirect, 1.0);
     }
   `;
   const ssgiPipeline = device.createRenderPipeline({
@@ -323,7 +350,7 @@ export function runSSGI(
     primitive: { topology: "triangle-list" }
   });
 
-  // 5. Pass 3: 【彻底修复疯狂闪烁】真·数学精准时空重投影 (使用 CPU 逆矩阵 invView)
+  // 4. Pass 3: 时空重投影累积（精准数学重投影 + 3x3 Color Box Clamping 防拖影）
   const temporalWGSL = `
     struct Uniforms {
       view: mat4x4f, proj: mat4x4f, invView: mat4x4f, prevViewProj: mat4x4f,
@@ -372,37 +399,45 @@ export function runSSGI(
 
       let linearZ = getLinearDepth(rawZ);
       let posVS = getViewPos(uv, linearZ);
-
-      // 【核心修复】：使用严格计算的真实 invView，绝不用错位的转置
       let posWS = (u.invView * vec4f(posVS, 1.0)).xyz;
 
-      // 准确重投影到上一帧历史 UV
       let prevClip = u.prevViewProj * vec4f(posWS, 1.0);
       let prevNDC = prevClip.xyz / prevClip.w;
       let prevUV = vec2f(prevNDC.x * 0.5 + 0.5, 1.0 - (prevNDC.y * 0.5 + 0.5));
 
-      // 若历史 UV 出界，重置为当前帧
       if (prevUV.x < 0.0 || prevUV.x > 1.0 || prevUV.y < 0.0 || prevUV.y > 1.0) {
         return vec4f(currentGI, 1.0);
       }
 
-      // 遮挡脱离检验 (Disocclusion Check)
+      // 遮挡脱离检验 (Disocclusion)
       let historyDepth = getLinearDepth(textureSampleLevel(fullDepthTex, pointSamp, prevUV, 0));
-      let depthDiff = abs(linearZ - historyDepth);
-      let depthInvalid = depthDiff > max(0.12, linearZ * 0.06);
+      let depthInvalid = abs(linearZ - historyDepth) > max(0.12, linearZ * 0.05);
 
       let currentNormal = octDecode(textureSampleLevel(fullNormalTex, pointSamp, uv, 0.0).xy);
       let historyNormal = octDecode(textureSampleLevel(fullNormalTex, pointSamp, prevUV, 0.0).xy);
-      let normalInvalid = dot(currentNormal, historyNormal) < 0.8;
+      let normalInvalid = dot(currentNormal, historyNormal) < 0.85;
 
       var alpha = u.settings.w;
       if (depthInvalid || normalInvalid) {
-        alpha = 1.0; // 发生几何断裂或遮挡，抛弃历史
+        alpha = 1.0;
+      }
+
+      // 3x3 邻域色彩盒约束（Color Clamping），彻底消灭拖影
+      var minC = currentGI;
+      var maxC = currentGI;
+      let halfPixel = 1.0 / u.halfRes.xy;
+      for (var y = -1; y <= 1; y++) {
+        for (var x = -1; x <= 1; x++) {
+          let neighbor = textureSampleLevel(currentTex, pointSamp, uv + vec2f(f32(x), f32(y)) * halfPixel, 0.0).rgb;
+          minC = min(minC, neighbor);
+          maxC = max(maxC, neighbor);
+        }
       }
 
       let historyGI = textureSampleLevel(historyTex, linearSamp, prevUV, 0.0).rgb;
-      let accumulated = mix(historyGI, currentGI, alpha);
-      return vec4f(accumulated, 1.0);
+      let clampedHistory = clamp(historyGI, minC, maxC);
+
+      return vec4f(mix(clampedHistory, currentGI, alpha), 1.0);
     }
   `;
   const temporalPipeline = device.createRenderPipeline({
@@ -412,7 +447,8 @@ export function runSSGI(
     primitive: { topology: "triangle-list" }
   });
 
-  // 6. Pass 4: 空间双边联合上采样降噪合成 (Joint Bilateral Upsampling)
+  // 5. Pass 4: 空间联合双边滤波上采样与色调合成 (Joint Bilateral Upsampling)
+// 5. Pass 4: 空间联合双边滤波上采样与色调合成 (Joint Bilateral Upsampling)
   const compositeWGSL = `
     struct Uniforms {
       view: mat4x4f, proj: mat4x4f, invView: mat4x4f, prevViewProj: mat4x4f,
@@ -444,8 +480,19 @@ export function runSSGI(
       return (near * far) / (far - rawDepth * (far - near));
     }
 
+    // 经典 ACES 色调映射：抑制极端过曝，提升中低对比度
+    fn acesToneMapping(color: vec3f) -> vec3f {
+      let a = 2.51;
+      let b = 0.03;
+      let c = 2.43;
+      let d = 0.59;
+      let e = 0.14;
+      return clamp((color * (a * color + b)) / (color * (c * color + d) + e), vec3f(0.0), vec3f(1.0));
+    }
+
     @fragment fn fs(@builtin(position) fragCoord: vec4f) -> @location(0) vec4f {
-      let uv = fragCoord.xy / vec2f(textureDimensions(fullColorTex));
+      let fullDims = vec2f(textureDimensions(fullColorTex));
+      let uv = fragCoord.xy / fullDims;
       let directColor = textureSampleLevel(fullColorTex, pointSamp, uv, 0.0).rgb;
 
       let rawZ = textureSampleLevel(fullDepthTex, pointSamp, uv, 0);
@@ -454,13 +501,13 @@ export function runSSGI(
       let centerDepth = getLinearDepth(rawZ);
       let centerNormal = octDecode(textureSampleLevel(fullNormalTex, pointSamp, uv, 0).xy);
 
-      let fullPixel = 1.0 / vec2f(textureDimensions(fullColorTex));
+      let fullPixel = 1.0 / fullDims;
       let halfPixel = 1.0 / u.halfRes.xy;
 
       var totalWeight = 0.0;
       var filteredGI = vec3f(0.0);
 
-      // 3x3 空间交叉双边滤波：彻底消除残留噪斑
+      // 3x3 空间交叉双边滤波
       for (var y = -1; y <= 1; y++) {
         for (var x = -1; x <= 1; x++) {
           let offset = vec2f(f32(x), f32(y));
@@ -471,17 +518,30 @@ export function runSSGI(
           let sampleDepth = getLinearDepth(textureSampleLevel(fullDepthTex, pointSamp, geomUV, 0));
           let sampleNormal = octDecode(textureSampleLevel(fullNormalTex, pointSamp, geomUV, 0).xy);
 
-          let depthWeight = exp(-abs(centerDepth - sampleDepth) * 20.0);
-          let normalWeight = max(0.0, pow(dot(centerNormal, sampleNormal), 16.0));
-          let w = depthWeight * normalWeight;
+          let depthDiff = abs(centerDepth - sampleDepth);
+          let depthWeight = exp(-depthDiff * 14.0);
+          let normalWeight = max(0.0, pow(dot(centerNormal, sampleNormal), 12.0));
+          let w = depthWeight * normalWeight + 0.001;
 
           filteredGI += sampleGI * w;
           totalWeight += w;
         }
       }
 
-      filteredGI = filteredGI / max(totalWeight, 0.0001);
-      return vec4f(directColor + filteredGI, 1.0);
+      filteredGI = filteredGI / totalWeight;
+
+      let renderMode = i32(u.halfRes.z);
+      if (renderMode == 1) { // 仅查看 SSGI 间接溢色通道
+        return vec4f(acesToneMapping(filteredGI * 1.5), 1.0);
+      } else if (renderMode == 2) { // 仅查看直接光通道
+        return vec4f(acesToneMapping(directColor), 1.0);
+      }
+
+      // 物理合成并施加电影级 ToneMapping
+      let combined = directColor + filteredGI;
+      let finalColor = acesToneMapping(combined);
+
+      return vec4f(finalColor, 1.0);
     }
   `;
   const compositePipeline = device.createRenderPipeline({
@@ -491,7 +551,7 @@ export function runSSGI(
     primitive: { topology: "triangle-list" }
   });
 
-  // 7. 预创建并缓存 BindGroups
+  // 6. BindGroups
   const gbufferBindGroup = device.createBindGroup({
     layout: gbufferPipeline.getBindGroupLayout(0),
     entries: [{ binding: 0, resource: { buffer: uniformBuffer } }]
@@ -560,22 +620,23 @@ export function runSSGI(
     ]
   });
 
-  // 8. 控制交互
-  const camera = { distance: 7.0, theta: 0, phi: 12, panY: 2.2 };
-  const ssgiSettings = { intensity: 1.6, radius: 1.5 };
+  // 7. 控制面板与交互
+  const camera = { distance: 7.2, theta: 0, phi: 12, panY: 2.3 };
+  const ssgiSettings = { intensity: 2.0, radius: 2.6, renderMode: 0 };
 
-  gui.addTextInfo("<b>工业级高保真 SSGI</b><br>精准时空重投影 + 双边联合降噪");
-  gui.add(ssgiSettings, "intensity", 0.0, 3.0, 0.1).name("GI 强度");
-  gui.add(ssgiSettings, "radius", 0.3, 3.0, 0.1).name("光线弹射半径");
-  gui.add(camera, "theta", -90, 90, 1).name("偏航角");
-  gui.add(camera, "phi", -20, 60, 1).name("俯仰角");
+  gui.addTextInfo("<b>工业级高保真 SSGI</b><br>时空联合降噪 + 强漫反射溢色");
+  gui.add(ssgiSettings, "intensity", 0.0, 4.0, 0.1).name("GI 漫反射强度");
+  gui.add(ssgiSettings, "radius", 0.5, 4.5, 0.1).name("光线弹射半径");
+  gui.addSelect(ssgiSettings, "renderMode", { "完整最终合成": 0, "仅间接光溢色 (SSGI)": 1, "仅直接光": 2 }).name("渲染通道");
+  gui.add(camera, "theta", -80, 80, 1).name("偏航角");
+  gui.add(camera, "phi", -15, 60, 1).name("俯仰角");
 
   let isDragging = false, lastX = 0, lastY = 0;
   canvas.onpointerdown = (e) => { isDragging = true; lastX = e.clientX; lastY = e.clientY; canvas.setPointerCapture(e.pointerId); };
   canvas.onpointermove = (e) => {
     if (!isDragging) return;
     camera.theta -= (e.clientX - lastX) * 0.4;
-    camera.phi = Math.max(-20, Math.min(60, camera.phi + (e.clientY - lastY) * 0.4));
+    camera.phi = Math.max(-15, Math.min(60, camera.phi + (e.clientY - lastY) * 0.4));
     lastX = e.clientX; lastY = e.clientY;
     gui.updateDisplay();
   };
@@ -583,13 +644,16 @@ export function runSSGI(
 
   let animId: number;
   let frameCount = 0;
-  let prevViewMatrix = new Float32Array(16);
-  let prevViewProjMatrix = new Float32Array(16);
+
+  // 初始矩阵预备（杜绝首帧为 0 导致的历史缓冲区污染）
+  const initialNear = 0.1, initialFar = 50.0, initialFov = (50 * Math.PI) / 180, initialAspect = fullWidth / fullHeight;
+  const initialEye = [0, camera.panY + camera.distance * Math.sin((12 * Math.PI) / 180), camera.distance * Math.cos((12 * Math.PI) / 180)];
+  let prevViewMatrix = createLookAtMatrix(initialEye, [0, camera.panY, 0], [0, 1, 0]);
+  let prevViewProjMatrix = multiplyMat4(createPerspectiveMatrix(initialFov, initialAspect, initialNear, initialFar), prevViewMatrix);
 
   function frame() {
     frameCount++;
-    const near = 0.1;
-    const far = 50.0;
+    const near = 0.1, far = 50.0;
     const fov = (50 * Math.PI) / 180;
     const aspect = fullWidth / fullHeight;
     const tanHalfFov = Math.tan(fov / 2);
@@ -605,29 +669,28 @@ export function runSSGI(
     const view = createLookAtMatrix(eye, [0, camera.panY, 0], [0, 1, 0]);
     const proj = createPerspectiveMatrix(fov, aspect, near, far);
     const viewProj = multiplyMat4(proj, view);
-    const invView = mat4Invert(view); // 真实逆视图矩阵！
+    const invView = createInverseViewMatrix(eye, [0, camera.panY, 0], [0, 1, 0]);
 
-    // 检测相机位移
+    // 运动检测自适应累积权重
     const camDelta = matrixDifference(view, prevViewMatrix);
     const isCameraMoving = camDelta > 1e-4;
-    const temporalAlpha = isCameraMoving ? 0.35 : 0.05;
+    const temporalAlpha = isCameraMoving ? 0.35 : 0.08;
 
-    // 单次写入连续缓冲
     cpuUniformData.set(view, 0);
     cpuUniformData.set(proj, 16);
     cpuUniformData.set(invView, 32);
     cpuUniformData.set(prevViewProjMatrix, 48);
     cpuUniformData.set([near, far, tanHalfFov, aspect], 64);
     cpuUniformData.set([ssgiSettings.intensity, ssgiSettings.radius, frameCount & 1023, temporalAlpha], 68);
-    cpuUniformData.set([halfWidth, halfHeight, 0, 0], 72);
+    cpuUniformData.set([halfWidth, halfHeight, Number(ssgiSettings.renderMode), 0], 72);
     device.queue.writeBuffer(uniformBuffer, 0, cpuUniformData);
 
     const encoder = device.createCommandEncoder();
 
-    // Pass 1: G-Buffer
+    // 1. G-Buffer
     const pass1 = encoder.beginRenderPass({
       colorAttachments: [
-        { view: gColor.createView(), clearValue: { r: 0.05, g: 0.05, b: 0.05, a: 1.0 }, loadOp: "clear", storeOp: "store" },
+        { view: gColor.createView(), clearValue: { r: 0.04, g: 0.04, b: 0.04, a: 1.0 }, loadOp: "clear", storeOp: "store" },
         { view: gNormal.createView(), clearValue: { r: 0, g: 0, b: 0, a: 0 }, loadOp: "clear", storeOp: "store" }
       ],
       depthStencilAttachment: { view: gDepth.createView(), depthClearValue: 1.0, depthLoadOp: "clear", depthStoreOp: "store" }
@@ -638,7 +701,7 @@ export function runSSGI(
     pass1.draw(vertices.length / 9);
     pass1.end();
 
-    // Pass 2: SSGI 计算
+    // 2. SSGI 计算
     const pass2 = encoder.beginRenderPass({
       colorAttachments: [{ view: currentSSGITex.createView(), loadOp: "clear", storeOp: "store" }]
     });
@@ -648,7 +711,7 @@ export function runSSGI(
     pass2.draw(6);
     pass2.end();
 
-    // Pass 3: 时空重投影累积
+    // 3. 时空累积 (Ping-Pong)
     const isPing = (frameCount % 2) === 0;
     const pass3 = encoder.beginRenderPass({
       colorAttachments: [{ view: (isPing ? ssgiHistoryB : ssgiHistoryA).createView(), loadOp: "clear", storeOp: "store" }]
@@ -659,7 +722,7 @@ export function runSSGI(
     pass3.draw(6);
     pass3.end();
 
-    // Pass 4: 空间联合双边滤波合成
+    // 4. 双边上采样降噪合成
     const pass4 = encoder.beginRenderPass({
       colorAttachments: [{ view: context.getCurrentTexture().createView(), loadOp: "clear", storeOp: "store" }]
     });
@@ -671,7 +734,6 @@ export function runSSGI(
 
     device.queue.submit([encoder.finish()]);
 
-    // 更新历史矩阵
     prevViewMatrix.set(view);
     prevViewProjMatrix.set(viewProj);
 
